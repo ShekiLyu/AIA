@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIA - 持仓管理</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1>持仓管理</h1>
+        
+        {% for type, positions_list in positions.items() %}
+        {% if positions_list %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>{{ type|capitalize }}持仓</h5>
+            </div>
+            <div class="card-body">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>代码</th>
+                            <th>名称</th>
+                            <th>类型</th>
+                            <th>数量</th>
+                            <th>成本价</th>
+                            <th>前收盘价</th>
+                            <th>当前价</th>
+                            <th>市值</th>
+                            <th>盈亏</th>
+                            <th>收益率</th>
+                            <th>日盈亏</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for pos in positions_list %}
+                        <tr data-symbol="{{ pos.symbol }}">
+                            <td>{{ pos.symbol }}</td>
+                            <td>{{ pos.name }}</td>
+                            <td>{{ pos.type }}</td>
+                            <td>{{ pos.quantity }}</td>
+                            <td>{{ "%.2f"|format(pos.avg_price) }}</td>
+                            <td>{{ "%.2f"|format(pos.pre_close_price) }}</td>
+                            <td>{{ "%.2f"|format(pos.current_price) }}</td>
+                            <td>{{ "%.2f"|format(pos.market_value) }}</td>
+                            <td class="{{ 'text-danger' if pos.profit > 0 else 'text-success' }}">
+                                {{ "%.2f"|format(pos.profit) }}
+                            </td>
+                            <td class="{{ 'text-danger' if pos.profit_pct > 0 else 'text-success' }}">
+                                {{ "%.2f"|format(pos.profit_pct) }}%
+                            </td>
+                            <td class="{{ 'text-danger' if pos.daily_return > 0 else 'text-success' }}">
+                                {{ "%.2f"|format(pos.daily_return) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+        
+
+        
+        <div class="card">
+            <div class="card-header">
+                <h5>总盈亏: <span id="total-profit"></span></h5>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    
+    // 移除类型注解，因为HTML文件中的JavaScript不支持类型注解
+    function updateElementWithStyle(element, newValue) {
+        const oldValue = parseFloat(element.text());
+        const diff = newValue - oldValue;
+        const absDiff = Math.abs(diff);
+        
+        // 更新值
+        element.text(newValue.toFixed(2));
+        
+        // 处理闪烁效果
+        if (absDiff > 0.00001) {
+            const color = diff > 0 ? 'red' : 'green';
+            element.addClass('flash-' + color);
+            setTimeout(() => element.removeClass('flash-' + color), 2000);
+        }
+        
+        // 处理字体颜色
+        element
+            .removeClass('text-danger text-success')
+            .addClass(newValue > 0.00001 ? 'text-danger' : 
+                    newValue < -0.00001 ? 'text-success' : '');
+    }
+
+    $(document).ready(function() {
+        // 定时刷新实时价格
+        function refreshPrices() {
+            $.ajax({
+                url: '/position/api/realtime_prices',
+                type: 'GET',
+                success: function(data) {
+                    var oldTotalProfit = parseFloat($('#total-profit').text());
+                    var totalProfit = 0; // 初始化总盈亏
+                    // 更新每个持仓的当前价格和计算值
+                    data.forEach(function(item) {
+                        var symbol = item.symbol;
+                        var rows = $('[data-symbol="' + symbol + '"]');
+                        
+                        rows.each(function() {
+                            var row = $(this);
+                            var currentPrice = parseFloat(item.current_price);
+                            if (isNaN(currentPrice)) {
+                                console.error('Invalid current price for symbol ' + symbol + ': ' + item.current_price);
+                                return;
+                            }
+                            
+                            row.find('td:nth-child(6)').text(item.pre_close_price);
+
+                            // 获取旧值并更新当前价
+                            var priceCell = row.find('td:nth-child(7)');
+                            updateElementWithStyle(priceCell, currentPrice);
+
+                            // 更新市值
+                            var marketValueCell = row.find('td:nth-child(8)');
+
+                            var quantity = parseFloat(row.find('td:nth-child(4)').text());
+                            updateElementWithStyle(marketValueCell, currentPrice * quantity);
+                            
+                            // 计算盈亏
+                            var avgPrice = parseFloat(row.find('td:nth-child(5)').text());
+                            var profit = (currentPrice - avgPrice) * quantity;
+                            
+                            // 更新总盈亏
+                            totalProfit += profit;
+
+                            // 更新盈亏单元格
+                            var profitCell = row.find('td:nth-child(9)');
+                            updateElementWithStyle(profitCell, profit);
+                                                        
+                            // 更新收益率
+                            var profitPct = (currentPrice / avgPrice - 1) * 100;
+                            var profitPctCell = row.find('td:nth-child(10)');
+                            updateElementWithStyle(profitPctCell, profitPct);
+
+                            
+                            // 更新日盈亏
+                            preClosePrice = parseFloat(row.find('td:nth-child(6)').text());
+                            var dailyReturn = (currentPrice - preClosePrice) * quantity;
+                            var dailyReturnCell = row.find('td:nth-child(11)');
+                            updateElementWithStyle(dailyReturnCell, dailyReturn);
+
+                        });
+                    });
+                    // 更新总盈亏
+                    updateElementWithStyle($('#total-profit'), totalProfit);
+                }
+            });
+        }
+        
+        // 每60秒刷新一次
+        refreshPrices();
+
+        setInterval(refreshPrices, 10000);
+    });
+    </script>
+    <style>
+        .flash-red {
+            animation: flashRed 2s;
+        }
+        .flash-green {
+            animation: flashGreen 2s;
+        }
+        @keyframes flashRed {
+            0% { background-color: rgba(255, 0, 0, 0.5); }
+            50% { background-color: rgba(255, 0, 0, 0.5); }
+            100% { background-color: transparent; }
+        }
+        @keyframes flashGreen {
+            0% { background-color: rgba(0, 255, 0, 0.5); }
+            50% { background-color: rgba(0, 255, 0, 0.5); }
+            100% { background-color: transparent; }
+        }
+    </style>
+</body>
+</html>
